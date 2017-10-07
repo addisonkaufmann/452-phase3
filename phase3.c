@@ -1,16 +1,15 @@
 #include <usloss.h>
+#include <usyscall.h>
 #include <phase1.h>
 #include <phase2.h>
 #include <phase3.h>
-#include <usyscall.h>
 #include <stdlib.h>
 
 
-/*----------------PROTOTYPES-----------------*/
 int spawnReal();
 int waitReal();
 int start3();
-/*-------------------------------------------*/
+
 
 int
 start2(char *arg)
@@ -54,7 +53,6 @@ start2(char *arg)
      * values back into the sysargs pointer, switch to user-mode, and 
      * return to the user code that called Spawn.
      */
-
     pid = spawnReal("start3", start3, NULL, USLOSS_MIN_STACK, 3);
 
     /* Call the waitReal version of your wait code here.
@@ -62,7 +60,7 @@ start2(char *arg)
      * in kernel (not user) mode.
      */
     pid = waitReal(&status);
-    return -1000;
 
+    return -1000;
 } /* start2 */
 

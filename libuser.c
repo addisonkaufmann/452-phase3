@@ -6,11 +6,12 @@
  *
  */
 #include <usloss.h>
+#include <usyscall.h>
 #include <phase1.h>
 #include <phase2.h>
-#include <libuser.h>
-#include <usyscall.h>
 #include <stdint.h>
+#include "libuser.h"
+
 
 #define CHECKMODE {    \
     if (USLOSS_PsrGet() & USLOSS_PSR_CURRENT_MODE) { \
