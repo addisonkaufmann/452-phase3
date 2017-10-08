@@ -12,7 +12,7 @@
 int spawnReal();
 int waitReal();
 int start3();
-void spawnLaunch();
+int spawnLaunch(char * arg);
 void initProcTable();
 void initSemTable();
 void initSyscallVec();
@@ -29,6 +29,15 @@ void semv();
 void semfree();
 void check_kernel_mode(char * arg);
 int isInKernelMode();
+
+typedef struct launchArgs * launchArgsPtr;
+typedef struct launchArgs launchArgs;
+
+struct launchArgs {
+    int (*func)(char *);
+    char * arg;
+    char * name;
+};
 
 
 /* GLOBAL DATA STRUCTURES */
@@ -104,22 +113,30 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
         USLOSS_Console("spawnReal(): called to spawn %s\n", name);
     }
 
-    // int result = fork1(name, spawnLaunch(func), arg, (int)stack_size, (int)priority);
+    // launchArgs la;
+    // la.func = func;
+    // la.arg = arg;
+    // la.name = name;
+
+    //call fork1 to spawnLaunch
+    int result = fork1(name, spawnLaunch, arg, (int)stack_size, (int)priority);
 
     if (debugflag3){
-        USLOSS_Console("spawnReal(): after fork1\n");
+        USLOSS_Console("spawnReal(): after fork1, result = %d\n", result);
+        dumpProcesses();
     }
-    //call fork1 to spawnLaunch
+    
     //switch to user mode before returning
     return -1000;
 }
 
-void spawnLaunch(int (*func)(char *)){
+int spawnLaunch(char * arg){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): called\n");
     }
     //switch to user mode before executing
     //execute func()
+    return -1000;
 }
 
 int waitReal(int * status){
