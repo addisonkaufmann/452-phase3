@@ -12,7 +12,7 @@ typedef struct sem sem;
 struct p3Proc {
     int pid;        //pid of phase3 proc
     int status;     //status of proc
-    mailbox privateMbox;
+    int privateMboxId;
     p3ProcPtr children;
     p3ProcPtr nextChild;
 };
