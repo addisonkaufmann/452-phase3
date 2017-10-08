@@ -64,3 +64,11 @@ start2(char *arg)
     return -1000;
 } /* start2 */
 
+int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long priority){
+    return -1000;
+}
+
+int waitReal(int * status){
+    return -1000;
+}
+
