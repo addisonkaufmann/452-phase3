@@ -13,6 +13,7 @@ struct p3Proc {
     int pid;        //pid of phase3 proc
     int status;     //status of proc
     int privateMboxId;
+    int parentPid;
     p3ProcPtr children;
     p3ProcPtr nextChild;
 };

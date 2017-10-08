@@ -5,6 +5,7 @@
 #include <phase3.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include "sems.h"
 
 
@@ -12,10 +13,11 @@
 int spawnReal();
 int waitReal();
 int start3();
-void spawnLaunch();
+int spawnLaunch(char * arg);
 void initProcTable();
 void initSemTable();
 void initSyscallVec();
+void initProc();
 void nullsys3();
 void spawn();
 void wait();
@@ -29,6 +31,16 @@ void semv();
 void semfree();
 void check_kernel_mode(char * arg);
 int isInKernelMode();
+int enterUserMode();
+
+typedef struct launchArgs * launchArgsPtr;
+typedef struct launchArgs launchArgs;
+
+struct launchArgs {
+    int (*func)(char *);
+    char * arg;
+    char name[150];
+};
 
 
 /* GLOBAL DATA STRUCTURES */
@@ -58,6 +70,8 @@ int start2(char *arg)
     initProcTable();
     initSemTable();
     initSyscallVec();
+    initProc(getpid(), -1);
+    
 
     /*
      * Create first user-level process and wait for it to finish.
@@ -103,26 +117,54 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
         USLOSS_Console("spawnReal(): called to spawn %s\n", name);
     }
 
-    // int result = fork1(name, spawnLaunch(func), arg, (int)stack_size, (int)priority);
+
+
+    //call fork1 to spawnLaunch
+
+
+    int pid = fork1(name, spawnLaunch, arg, (int)stack_size, (int)priority);
 
     if (debugflag3){
-        USLOSS_Console("spawnReal(): after fork1\n");
+        USLOSS_Console("spawnReal(): after fork1, pid = %d\n", pid);
     }
-    //call fork1 to spawnLaunch
-    //switch to user mode before returning
-    return -1000;
+
+    if (pid < 0){
+        fprintf(stderr, "pid < 0. Terminating\n");
+        USLOSS_Halt(1); //FIXME: terminate instead of halt
+    }
+
+    initProc(pid, getpid());
+
+    return pid;
 }
 
-void spawnLaunch(int (*func)(char *)){
+int spawnLaunch(char * arg){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): called\n");
     }
+
+    //wait for spawnReal to finish creating pte
     //switch to user mode before executing
     //execute func()
+    return -1000;
 }
 
 int waitReal(int * status){
-    return -1000;
+    if (debugflag3){
+        USLOSS_Console("waitReal(): called\n");
+    }
+    int i = getpid() % MAXPROC;
+    int mboxid = ProcTable[i].privateMboxId;
+    int result = MboxReceive(mboxid, NULL, 0);
+    if (result < 0){
+        fprintf(stderr, "waitReal(): mbox receive result < 0, terminate.\n");
+        USLOSS_Halt(1); //FIXME: terminate instead of  halt.
+    }
+    if (debugflag3){
+        USLOSS_Console("waitReal(): after mbox receive, result = %d\n", result);
+    }
+
+    return 0; 
 }
 
 void initProcTable(){
@@ -163,7 +205,7 @@ void spawn(USLOSS_Sysargs *args){
 }
 void wait(USLOSS_Sysargs *args){
 }
-void terminate(USLOSS_Sysargs *args){
+void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox to wake them up
 }
 void gettimeofday(USLOSS_Sysargs *args){
 }
@@ -204,6 +246,42 @@ int enterUserMode() {
     }
     else {
         return 0;
+    }
+}
+
+void initProc(int pid, int parentPid){
+
+    int i = pid % MAXPROC;
+
+    //set fields
+    ProcTable[i].status = OCCUPIED;
+    ProcTable[i].pid = pid;
+    ProcTable[i].children = NULL;
+    ProcTable[i].nextChild = NULL;
+    ProcTable[i].parentPid = parentPid;
+    
+    //create mailbox
+    int mboxid = MboxCreate(0,0);
+    if (mboxid < 0){
+        fprintf(stderr, "mailboxid < 0. Terminating\n");
+        USLOSS_Halt(1); //FIXME: terminate instead of halt
+    }
+    ProcTable[i].privateMboxId = mboxid;
+
+    //append to parent's children
+    if (parentPid > 0){
+        int j = parentPid % MAXPROC;
+        if (ProcTable[j].children == NULL){
+            ProcTable[j].children = &ProcTable[i];
+        } else {
+            p3ProcPtr curr = ProcTable[j].children;
+            p3ProcPtr prev = NULL;
+            while (curr != NULL){
+                prev = curr;
+                curr = curr->nextChild;
+            }
+            prev->nextChild = &ProcTable[i];
+        }
     }
 }
 
