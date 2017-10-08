@@ -179,7 +179,7 @@ void semfree(USLOSS_Sysargs *args){
 }
 
 
-//FIXME: maybe we don't need these?
+//FIXME: maybe we don't need these? - waiting on Piazza confirmation
 void check_kernel_mode(char * arg) {
     if (!isInKernelMode()) {
         fprintf(stderr, "%s: Not in kernel mode.\n", arg);
