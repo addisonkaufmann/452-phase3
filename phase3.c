@@ -4,11 +4,36 @@
 #include <phase2.h>
 #include <phase3.h>
 #include <stdlib.h>
+#include "sems.h"
 
-
+/* FUNCTION PROTOTYPES */
 int spawnReal();
 int waitReal();
 int start3();
+void initProcTable();
+void initSemTable();
+void initSyscallVec();
+void nullsys3();
+
+void spawn();
+void wait();
+void terminate();
+void gettimeofday();
+void getpid3();
+void cputime();
+void semcreate();
+void semp();
+void semv();
+void semfree();
+extern void check_kernel_mode();
+
+
+/* GLOBAL DATA STRUCTURES */
+
+p3Proc ProcTable[MAXPROC];  //phase 3 proctable
+sem SemTable[MAXSEMS];      //semaphore table
+
+
 
 
 int
@@ -19,11 +44,15 @@ start2(char *arg)
     /*
      * Check kernel mode here.
      */
+    check_kernel_mode("start2");
 
     /*
      * Data structure initialization as needed...
      */
 
+    initProcTable();
+    initSemTable();
+    initSyscallVec();
 
     /*
      * Create first user-level process and wait for it to finish.
@@ -65,10 +94,68 @@ start2(char *arg)
 } /* start2 */
 
 int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long priority){
+    //also spawnLaunch() ??
     return -1000;
 }
 
 int waitReal(int * status){
     return -1000;
 }
+
+void initProcTable(){
+    for (int i = 0; i < MAXPROC; i++){
+        ProcTable[i].status = EMPTY;
+    }
+}
+
+void initSemTable(){
+    for (int i = 0; i < MAXSEMS; i++){
+        SemTable[i].status = EMPTY;
+    }
+}
+
+void initSyscallVec(){
+    for (int i = 0; i < MAXSYSCALLS; i++){
+        systemCallVec[i] = nullsys3;
+    }
+    systemCallVec[SYS_SPAWN] = spawn;
+    systemCallVec[SYS_WAIT] = wait;
+    systemCallVec[SYS_TERMINATE] = terminate;
+    systemCallVec[SYS_GETTIMEOFDAY] = gettimeofday;
+    systemCallVec[SYS_CPUTIME] = cputime;
+    systemCallVec[SYS_GETPID] = getpid3;
+    systemCallVec[SYS_SEMCREATE] = semcreate;
+    systemCallVec[SYS_SEMP] = semp;
+    systemCallVec[SYS_SEMV] = semv;
+    systemCallVec[SYS_SEMFREE] = semfree;
+}
+
+void nullsys3(USLOSS_Sysargs *args)
+{
+   //terminate
+} /* nullsys */
+
+void spawn(USLOSS_Sysargs *args){
+}
+void wait(USLOSS_Sysargs *args){
+}
+void terminate(USLOSS_Sysargs *args){
+}
+void gettimeofday(USLOSS_Sysargs *args){
+}
+void cputime(USLOSS_Sysargs *args){
+}
+void getpid3(USLOSS_Sysargs *args){
+}
+void semcreate(USLOSS_Sysargs *args){
+}
+void semp(USLOSS_Sysargs *args){
+}
+void semv(USLOSS_Sysargs *args){
+}
+void semfree(USLOSS_Sysargs *args){
+}
+
+
+
 
