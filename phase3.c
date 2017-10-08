@@ -129,6 +129,9 @@ int waitReal(int * status){
 void initProcTable(){
     for (int i = 0; i < MAXPROC; i++){
         ProcTable[i].status = EMPTY;
+        ProcTable[i].privateMboxId = MboxCreate(0,0);
+        ProcTable[i].children = NULL;
+        ProcTable[i].nextChild = NULL;
     }
 }
 
@@ -191,6 +194,18 @@ int isInKernelMode() {
     unsigned int psr = USLOSS_PsrGet();
     unsigned int op = 0x1;
     return psr & op;
+}
+
+int enterUserMode() {
+    unsigned int psr = USLOSS_PsrGet();
+    unsigned int op = 0xfffffffe;
+    int result = USLOSS_PsrSet(psr & op);
+    if (result == USLOSS_ERR_INVALID_PSR) {
+        return -1;
+    }
+    else {
+        return 0;
+    }
 }
 
 
