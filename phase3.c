@@ -39,8 +39,7 @@ int debugflag3 = 1;
 
 
 
-int
-start2(char *arg)
+int start2(char *arg)
 {
     int pid;
     int status;
