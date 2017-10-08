@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include "libuser.h"
 
+extern int debugflag3;
+
 
 #define CHECKMODE {    \
     if (USLOSS_PsrGet() & USLOSS_PSR_CURRENT_MODE) { \
@@ -39,6 +41,9 @@
 int Spawn(char *name, int (*func)(char *), char *arg, long stack_size, 
     long priority, int *pid)   
 {
+    if (debugflag3){
+        USLOSS_Console("Spawn(): called");
+    }
     USLOSS_Sysargs sysArg;
     
     CHECKMODE;

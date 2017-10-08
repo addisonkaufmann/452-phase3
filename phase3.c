@@ -4,17 +4,19 @@
 #include <phase2.h>
 #include <phase3.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "sems.h"
+
 
 /* FUNCTION PROTOTYPES */
 int spawnReal();
 int waitReal();
 int start3();
+void spawnLaunch();
 void initProcTable();
 void initSemTable();
 void initSyscallVec();
 void nullsys3();
-
 void spawn();
 void wait();
 void terminate();
@@ -25,14 +27,15 @@ void semcreate();
 void semp();
 void semv();
 void semfree();
-extern void check_kernel_mode();
+void check_kernel_mode(char * arg);
+int isInKernelMode();
 
 
 /* GLOBAL DATA STRUCTURES */
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
-
+int debugflag3 = 1;
 
 
 
@@ -45,6 +48,9 @@ start2(char *arg)
      * Check kernel mode here.
      */
     check_kernel_mode("start2");
+    if (debugflag3){
+        USLOSS_Console("start2(): called in kernel mode\n");
+    }
 
     /*
      * Data structure initialization as needed...
@@ -94,8 +100,26 @@ start2(char *arg)
 } /* start2 */
 
 int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long priority){
-    //also spawnLaunch() ??
+    if (debugflag3){
+        USLOSS_Console("spawnReal(): called to spawn %s\n", name);
+    }
+
+    // int result = fork1(name, spawnLaunch(func), arg, (int)stack_size, (int)priority);
+
+    if (debugflag3){
+        USLOSS_Console("spawnReal(): after fork1\n");
+    }
+    //call fork1 to spawnLaunch
+    //switch to user mode before returning
     return -1000;
+}
+
+void spawnLaunch(int (*func)(char *)){
+    if (debugflag3){
+        USLOSS_Console("spawnLaunch(): called\n");
+    }
+    //switch to user mode before executing
+    //execute func()
 }
 
 int waitReal(int * status){
@@ -130,11 +154,9 @@ void initSyscallVec(){
     systemCallVec[SYS_SEMFREE] = semfree;
 }
 
-void nullsys3(USLOSS_Sysargs *args)
-{
+void nullsys3(USLOSS_Sysargs *args){
    //terminate
 } /* nullsys */
-
 void spawn(USLOSS_Sysargs *args){
 }
 void wait(USLOSS_Sysargs *args){
@@ -154,6 +176,21 @@ void semp(USLOSS_Sysargs *args){
 void semv(USLOSS_Sysargs *args){
 }
 void semfree(USLOSS_Sysargs *args){
+}
+
+
+//FIXME: maybe we don't need these?
+void check_kernel_mode(char * arg) {
+    if (!isInKernelMode()) {
+        fprintf(stderr, "%s: Not in kernel mode.\n", arg);
+        USLOSS_Halt(1);
+    }
+}
+
+int isInKernelMode() {
+    unsigned int psr = USLOSS_PsrGet();
+    unsigned int op = 0x1;
+    return psr & op;
 }
 
 
