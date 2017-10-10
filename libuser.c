@@ -42,7 +42,7 @@ int Spawn(char *name, int (*func)(char *), char *arg, long stack_size,
     long priority, int *pid)   
 {
     if (debugflag3){
-        USLOSS_Console("Spawn(): called");
+        USLOSS_Console("Spawn(): called\n");
     }
     USLOSS_Sysargs sysArg;
     

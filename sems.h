@@ -14,6 +14,8 @@ struct p3Proc {
     int status;     //status of proc
     int privateMboxId;
     int parentPid;
+    int (*func)();
+    char arg[MAXARG+1];
     p3ProcPtr children;
     p3ProcPtr nextChild;
 };

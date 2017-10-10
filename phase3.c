@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "sems.h"
 
 
@@ -13,7 +14,7 @@
 int spawnReal();
 int waitReal();
 int start3();
-int spawnLaunch(char * arg);
+int spawnLaunch();
 void initProcTable();
 void initSemTable();
 void initSyscallVec();
@@ -32,6 +33,8 @@ void semfree();
 void check_kernel_mode(char * arg);
 int isInKernelMode();
 int enterUserMode();
+p3ProcPtr getCurrentProc();
+p3ProcPtr getProc();
 
 typedef struct launchArgs * launchArgsPtr;
 typedef struct launchArgs launchArgs;
@@ -118,45 +121,61 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
         USLOSS_Console("spawnReal(): called to spawn %s\n", name);
     }
 
-
-
     //call fork1 to spawnLaunch
-
-
-    int pid = fork1(name, spawnLaunch, arg, (int)stack_size, (int)priority);
+    int kidpid = fork1(name, spawnLaunch, NULL, (int)stack_size, (int)priority);
 
     if (debugflag3){
-        USLOSS_Console("spawnReal(): after fork1, pid = %d\n", pid);
+        USLOSS_Console("spawnReal(): after fork1, kidpid = %d\n", kidpid);
     }
 
-    if (pid < 0){
-        fprintf(stderr, "pid < 0. Terminating\n");
+    if (kidpid < 0){
+        fprintf(stderr, "kidpid < 0. Terminating\n");
         USLOSS_Halt(1); //FIXME: terminate instead of halt
     }
 
-    initProc(pid, getpid());
+    initProc(kidpid, getpid());
+    p3ProcPtr kidProc = getProc(kidpid);
 
-    return pid;
+    //save function pointer and arg to PTE
+    if (arg != NULL){
+        memcpy(kidProc->arg, arg, strlen(arg) + 1);
+    }
+    kidProc->func = func;
+
+
+
+    //wake up child who's blocked in spawnLaunch()
+    MboxSend(kidProc->privateMboxId, NULL, 0);
+
+
+    return kidpid;
 }
 
-int spawnLaunch(char * arg){
+int spawnLaunch(){
     if (debugflag3){
-        USLOSS_Console("spawnLaunch(): called\n");
+        USLOSS_Console("spawnLaunch(): called by pid %d\n", getpid());
     }
 
-    //wait for spawnReal to finish creating pte
+    //wait for spawnReal to finish creating pte - maybe call waitReal??
+    p3ProcPtr me = getCurrentProc();
+    MboxReceive(me->privateMboxId, NULL, 0);
+
     //switch to user mode before executing
+    if (debugflag3){
+        USLOSS_Console("spawnLaunch(): entering user mode and executing func\n");
+    }
+    enterUserMode();
+    me->func();
     //execute func()
     return -1000;
 }
 
 int waitReal(int * status){
     if (debugflag3){
-        USLOSS_Console("waitReal(): called\n");
+        USLOSS_Console("waitReal(): called by pid %d\n", getpid());
     }
-    int i = getpid() % MAXPROC;
-    int mboxid = ProcTable[i].privateMboxId;
-    int result = MboxReceive(mboxid, NULL, 0);
+    p3ProcPtr me = getCurrentProc();
+    int result = MboxReceive(me->privateMboxId, NULL, 0);
     if (result < 0){
         fprintf(stderr, "waitReal(): mbox receive result < 0, terminate.\n");
         USLOSS_Halt(1); //FIXME: terminate instead of  halt.
@@ -165,6 +184,7 @@ int waitReal(int * status){
         USLOSS_Console("waitReal(): after mbox receive, result = %d\n", result);
     }
 
+    *status = result;
     return 0; 
 }
 
@@ -202,8 +222,59 @@ void initSyscallVec(){
 void nullsys3(USLOSS_Sysargs *args){
    //terminate
 } /* nullsys */
+
+/*
+Input
+    arg1: address of the function to spawn.
+    arg2: parameter passed to spawned function.
+    arg3: stack size (in bytes).
+    arg4: priority.
+    arg5: character string containing process’s name.
+
+Output: 
+    arg1: the PID of the newly created process; -1 if a process could not be created.
+    arg4: -1 if illegal values are given as input; 0 otherwise.
+*/
 void spawn(USLOSS_Sysargs *args){
+    if (debugflag3){
+        USLOSS_Console("spawn(): called to spawn %s\n", args->arg5);
+    }
+    //call spawnReal with proper args char *name, int (*func)(char *), char *arg, long stack_size, long priority
+    int (*func)(char *) = args->arg1;
+    char * arg = args->arg2;
+    int stack_size = (uintptr_t) args->arg3;
+    int priority = (uintptr_t) args->arg4;
+    char * name = args->arg5;
+
+    long errorcode = 0;
+    //error checks
+    if (name == NULL || func == NULL){
+        errorcode = -1;
+    }
+    if (name != NULL && (strlen(name) >= MAXNAME - 1)){
+        errorcode = -1;
+    }
+    if (stack_size < USLOSS_MIN_STACK){
+        errorcode = -1;
+    }
+    if (priority > 6 || priority < 1) {
+        errorcode = -1;
+    }
+
+
+    long result = (long)spawnReal(name, func, arg, stack_size, priority);
+    if (result < 0){
+        result = -1;
+    }
+
+    if (debugflag3){
+        USLOSS_Console("spawn(): returning result = %d, errorcode = %d\n", result, errorcode);
+    }
+
+    args->arg1 = (void *)result;
+    args->arg4 = (void *)errorcode;
 }
+
 void wait(USLOSS_Sysargs *args){
 }
 void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox to wake them up
@@ -250,6 +321,7 @@ int enterUserMode() {
     }
 }
 
+
 void initProc(int pid, int parentPid){
 
     int i = pid % MAXPROC;
@@ -285,6 +357,15 @@ void initProc(int pid, int parentPid){
         }
     }
 }
+
+p3ProcPtr getCurrentProc(){
+    return getProc(getpid());
+}
+
+p3ProcPtr getProc(int pid) {
+    return &ProcTable[pid % MAXPROC];
+}
+
 
 
 
