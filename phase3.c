@@ -13,6 +13,7 @@
 /* FUNCTION PROTOTYPES */
 int spawnReal();
 int waitReal();
+void terminateReal();
 int start3();
 int spawnLaunch();
 void initProcTable();
@@ -35,6 +36,7 @@ int isInKernelMode();
 int enterUserMode();
 p3ProcPtr getCurrentProc();
 p3ProcPtr getProc();
+void zapChildren();
 
 typedef struct launchArgs * launchArgsPtr;
 typedef struct launchArgs launchArgs;
@@ -50,7 +52,7 @@ struct launchArgs {
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
-int debugflag3 = 1;
+int debugflag3 = 0;
 
 
 
@@ -158,7 +160,9 @@ int spawnLaunch(){
 
     //wait for spawnReal to finish creating pte - maybe call waitReal??
     p3ProcPtr me = getCurrentProc();
+    me->status=WAITING;
     MboxReceive(me->privateMboxId, NULL, 0);
+    me->status = OCCUPIED;
 
     //switch to user mode before executing
     if (debugflag3){
@@ -175,17 +179,59 @@ int waitReal(int * status){
         USLOSS_Console("waitReal(): called by pid %d\n", getpid());
     }
     p3ProcPtr me = getCurrentProc();
+    me->status = WAITING;
     int result = MboxReceive(me->privateMboxId, NULL, 0);
+    me->status = OCCUPIED;
     if (result < 0){
         fprintf(stderr, "waitReal(): mbox receive result < 0, terminate.\n");
         USLOSS_Halt(1); //FIXME: terminate instead of  halt.
     }
     if (debugflag3){
-        USLOSS_Console("waitReal(): after mbox receive, result = %d\n", result);
+        USLOSS_Console("waitReal(): pid %d woken up by pid %d\n", getpid(), me->wakerPid);
     }
 
-    *status = result;
-    return 0; 
+    *status = me->wakerCode;
+    return me->wakerPid; 
+}
+
+void terminateReal(int status){
+    if (debugflag3){
+        USLOSS_Console("terminateReal(): called by pid %d with status = %d\n", getpid(), status);
+    }
+
+    p3ProcPtr me = getCurrentProc();
+
+    if (me->pid == 4){ //this is 'start3'
+        //TODO: check that no hanky panky is happening
+        //dumpProcesses();
+        zapChildren(me->pid);
+        if (debugflag3){
+            USLOSS_Console("Terminating process \'start3\'. Halting...\n");
+        }
+        USLOSS_Halt(0); //maybe not?
+    }
+
+    p3ProcPtr parent = getProc(me->parentPid);
+    if(parent->status == WAITING){
+        parent->wakerPid = me->pid;
+        parent->wakerCode = status;
+        MboxCondSend(parent->privateMboxId, NULL, 0);
+    }
+
+    zapChildren(me->pid);
+    quit(status);
+    
+    
+}
+
+void zapChildren(int pid){
+    p3ProcPtr parent = getProc(pid);
+    p3ProcPtr child = parent->children;
+    while (child != NULL){
+        zap(child->pid);
+        child->status = EMPTY;
+        child = child->nextChild;
+    }
 }
 
 void initProcTable(){
@@ -275,9 +321,28 @@ void spawn(USLOSS_Sysargs *args){
     args->arg4 = (void *)errorcode;
 }
 
+/*
+Output
+    arg1: process id of the terminating child.
+    arg2: the termination code of the child.
+*/
 void wait(USLOSS_Sysargs *args){
+    int status;
+
+    long kidpid = (long)waitReal(&status);
+    long result = (long) status;
+
+    args->arg1 = (void * )kidpid;
+    args->arg2 = (void * )result;
 }
+
+/*
+Input
+    arg1: termination code for the process.
+*/
 void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox to wake them up
+    int status = (uintptr_t)args->arg1;
+    terminateReal(status);
 }
 void gettimeofday(USLOSS_Sysargs *args){
 }
@@ -295,7 +360,6 @@ void semfree(USLOSS_Sysargs *args){
 }
 
 
-//FIXME: maybe we don't need these? - waiting on Piazza confirmation
 void check_kernel_mode(char * arg) {
     if (!isInKernelMode()) {
         fprintf(stderr, "%s: Not in kernel mode.\n", arg);
@@ -324,14 +388,17 @@ int enterUserMode() {
 
 void initProc(int pid, int parentPid){
 
-    int i = pid % MAXPROC;
+    p3ProcPtr proc = getProc(pid);
 
     //set fields
-    ProcTable[i].status = OCCUPIED;
-    ProcTable[i].pid = pid;
-    ProcTable[i].children = NULL;
-    ProcTable[i].nextChild = NULL;
-    ProcTable[i].parentPid = parentPid;
+    proc->status = OCCUPIED;
+    proc->pid = pid;
+    proc->children = NULL;
+    proc->nextChild = NULL;
+    proc->func = NULL;
+    proc->parentPid = parentPid;
+    proc->wakerPid = -1;
+    proc->wakerCode = -1;
     
     //create mailbox
     int mboxid = MboxCreate(0,0);
@@ -339,21 +406,21 @@ void initProc(int pid, int parentPid){
         fprintf(stderr, "mailboxid < 0. Terminating\n");
         USLOSS_Halt(1); //FIXME: terminate instead of halt
     }
-    ProcTable[i].privateMboxId = mboxid;
+    proc->privateMboxId = mboxid;
 
     //append to parent's children
     if (parentPid > 0){
-        int j = parentPid % MAXPROC;
-        if (ProcTable[j].children == NULL){
-            ProcTable[j].children = &ProcTable[i];
+        p3ProcPtr parentProc = getProc(parentPid);
+        if (parentProc->children == NULL){
+            parentProc->children = proc;
         } else {
-            p3ProcPtr curr = ProcTable[j].children;
+            p3ProcPtr curr = parentProc->children;
             p3ProcPtr prev = NULL;
             while (curr != NULL){
                 prev = curr;
                 curr = curr->nextChild;
             }
-            prev->nextChild = &ProcTable[i];
+            prev->nextChild = proc;
         }
     }
 }
