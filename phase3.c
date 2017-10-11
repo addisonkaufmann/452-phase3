@@ -37,6 +37,8 @@ int enterUserMode();
 p3ProcPtr getCurrentProc();
 p3ProcPtr getProc();
 void zapChildren();
+void cleanupProc();
+void dumpProcesses3();
 
 typedef struct launchArgs * launchArgsPtr;
 typedef struct launchArgs launchArgs;
@@ -52,7 +54,7 @@ struct launchArgs {
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
-int debugflag3 = 0;
+int debugflag3 = 1;
 
 
 
@@ -136,18 +138,25 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     }
 
     initProc(kidpid, getpid());
+
     p3ProcPtr kidProc = getProc(kidpid);
+
 
     //save function pointer and arg to PTE
     if (arg != NULL){
         memcpy(kidProc->arg, arg, strlen(arg) + 1);
     }
     kidProc->func = func;
-
-
+    
+    if (debugflag3){
+        USLOSS_Console("up the mbox id = %d\n", kidProc->privateMboxId);
+    }
 
     //wake up child who's blocked in spawnLaunch()
     MboxSend(kidProc->privateMboxId, NULL, 0);
+    if (debugflag3){
+        USLOSS_Console("got here 1\n");
+    }
 
 
     return kidpid;
@@ -158,11 +167,12 @@ int spawnLaunch(){
         USLOSS_Console("spawnLaunch(): called by pid %d\n", getpid());
     }
 
-    //wait for spawnReal to finish creating pte - maybe call waitReal??
+    //wait for spawnReal to finish creating pte
     p3ProcPtr me = getCurrentProc();
-    me->status=WAITING;
+    if (debugflag3){
+        USLOSS_Console("the mbox id = %d\n", me->privateMboxId);
+    }
     MboxReceive(me->privateMboxId, NULL, 0);
-    me->status = OCCUPIED;
 
     //switch to user mode before executing
     if (debugflag3){
@@ -171,27 +181,26 @@ int spawnLaunch(){
     enterUserMode();
     me->func();
     //execute func()
-    return -1000;
+    return 0;
 }
 
 int waitReal(int * status){
     if (debugflag3){
         USLOSS_Console("waitReal(): called by pid %d\n", getpid());
     }
-    p3ProcPtr me = getCurrentProc();
-    me->status = WAITING;
-    int result = MboxReceive(me->privateMboxId, NULL, 0);
-    me->status = OCCUPIED;
-    if (result < 0){
-        fprintf(stderr, "waitReal(): mbox receive result < 0, terminate.\n");
+    int result;
+    int pid = join(&result);
+
+    if (pid < 0){
+        fprintf(stderr, "waitReal(): join result < 0, terminate.\n");
         USLOSS_Halt(1); //FIXME: terminate instead of  halt.
     }
     if (debugflag3){
-        USLOSS_Console("waitReal(): pid %d woken up by pid %d\n", getpid(), me->wakerPid);
+        USLOSS_Console("waitReal(): pid %d after join of pid %d\n", getpid(), pid);
     }
 
-    *status = me->wakerCode;
-    return me->wakerPid; 
+    *status = result;
+    return pid; 
 }
 
 void terminateReal(int status){
@@ -201,37 +210,54 @@ void terminateReal(int status){
 
     p3ProcPtr me = getCurrentProc();
 
-    if (me->pid == 4){ //this is 'start3'
-        //TODO: check that no hanky panky is happening
-        //dumpProcesses();
-        zapChildren(me->pid);
-        if (debugflag3){
-            USLOSS_Console("Terminating process \'start3\'. Halting...\n");
-        }
-        USLOSS_Halt(0); //maybe not?
-    }
 
-    p3ProcPtr parent = getProc(me->parentPid);
-    if(parent->status == WAITING){
-        parent->wakerPid = me->pid;
-        parent->wakerCode = status;
-        MboxCondSend(parent->privateMboxId, NULL, 0);
+    if (me->numKids > 0){
+        zapChildren(me);
+        //zap all children
     }
+    
 
-    zapChildren(me->pid);
+    cleanupProc(me); //reset fields and remove from parent's list 
+
     quit(status);
-    
-    
 }
 
-void zapChildren(int pid){
-    p3ProcPtr parent = getProc(pid);
-    p3ProcPtr child = parent->children;
+void zapChildren(p3ProcPtr proc){
+    p3ProcPtr child = proc->children;
     while (child != NULL){
         zap(child->pid);
-        child->status = EMPTY;
+        proc->numKids--;
         child = child->nextChild;
     }
+    proc->children = NULL;
+}
+
+/*
+Reset proc fields and remove proc from parent's list of children
+*/
+void cleanupProc(p3ProcPtr proc){
+
+    p3ProcPtr parent = getProc(proc->parentPid);
+    if (proc->pid == parent->children->pid){
+        parent->children = proc->nextChild;
+    } else {
+        p3ProcPtr curr = parent->children;
+        p3ProcPtr prev = NULL;
+        while (curr->pid != proc->pid){
+            prev = curr;
+            curr = curr->nextChild;
+        } 
+        prev->nextChild = proc->nextChild;
+    }
+
+    parent->numKids--;
+    proc->pid = -1;
+    proc->status = EMPTY;
+    proc->parentPid = -1;
+    proc->func = NULL;
+    proc->children = NULL;
+    proc->nextChild = NULL;
+    proc->numKids = 0;
 }
 
 void initProcTable(){
@@ -343,6 +369,7 @@ Input
 void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox to wake them up
     int status = (uintptr_t)args->arg1;
     terminateReal(status);
+
 }
 void gettimeofday(USLOSS_Sysargs *args){
 }
@@ -397,16 +424,6 @@ void initProc(int pid, int parentPid){
     proc->nextChild = NULL;
     proc->func = NULL;
     proc->parentPid = parentPid;
-    proc->wakerPid = -1;
-    proc->wakerCode = -1;
-    
-    //create mailbox
-    int mboxid = MboxCreate(0,0);
-    if (mboxid < 0){
-        fprintf(stderr, "mailboxid < 0. Terminating\n");
-        USLOSS_Halt(1); //FIXME: terminate instead of halt
-    }
-    proc->privateMboxId = mboxid;
 
     //append to parent's children
     if (parentPid > 0){
@@ -422,6 +439,7 @@ void initProc(int pid, int parentPid){
             }
             prev->nextChild = proc;
         }
+        parentProc->numKids++;
     }
 }
 
@@ -431,6 +449,21 @@ p3ProcPtr getCurrentProc(){
 
 p3ProcPtr getProc(int pid) {
     return &ProcTable[pid % MAXPROC];
+}
+
+void dumpProcesses3() {
+    char * statuses[2];
+    statuses[OCCUPIED] = "OCCUPIED";
+    statuses[EMPTY] = "EMPTY";
+
+
+    USLOSS_Console(" SLOT   PID   PARENTPID     STATUS     NUM CHILDREN \n");
+    USLOSS_Console("------ ----- ----------- ------------ --------------\n");
+    for (int i = 0; i < MAXPROC; i++){
+            p3ProcPtr temp = &ProcTable[i];
+            int parentpid = temp->parentPid; 
+            USLOSS_Console("%6d %5d %11d %12s %14d\n", i, temp->pid, parentpid, statuses[temp->status], temp->numKids);
+    }
 }
 
 
