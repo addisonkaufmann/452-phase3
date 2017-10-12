@@ -141,16 +141,11 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
 
     p3ProcPtr kidProc = getProc(kidpid);
 
-
     //save function pointer and arg to PTE
     if (arg != NULL){
         memcpy(kidProc->arg, arg, strlen(arg) + 1);
     }
     kidProc->func = func;
-    
-    if (debugflag3){
-        USLOSS_Console("up the mbox id = %d\n", kidProc->privateMboxId);
-    }
 
     //wake up child who's blocked in spawnLaunch()
     MboxSend(kidProc->privateMboxId, NULL, 0);
@@ -169,9 +164,6 @@ int spawnLaunch(){
 
     //wait for spawnReal to finish creating pte
     p3ProcPtr me = getCurrentProc();
-    if (debugflag3){
-        USLOSS_Console("the mbox id = %d\n", me->privateMboxId);
-    }
     MboxReceive(me->privateMboxId, NULL, 0);
 
     //switch to user mode before executing
@@ -180,7 +172,10 @@ int spawnLaunch(){
     }
     enterUserMode();
     me->func();
-    //execute func()
+    if (debugflag3){
+        USLOSS_Console("spawnLaunch(): finished executing func\n");
+    }
+    terminateReal(15);  
     return 0;
 }
 
@@ -210,15 +205,12 @@ void terminateReal(int status){
 
     p3ProcPtr me = getCurrentProc();
 
-
     if (me->numKids > 0){
         zapChildren(me);
         //zap all children
     }
     
-
     cleanupProc(me); //reset fields and remove from parent's list 
-
     quit(status);
 }
 
@@ -292,7 +284,7 @@ void initSyscallVec(){
 }
 
 void nullsys3(USLOSS_Sysargs *args){
-   //terminate
+   terminateReal(15);
 } /* nullsys */
 
 /*
@@ -345,6 +337,11 @@ void spawn(USLOSS_Sysargs *args){
 
     args->arg1 = (void *)result;
     args->arg4 = (void *)errorcode;
+
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 
 /*
@@ -358,8 +355,14 @@ void wait(USLOSS_Sysargs *args){
     long kidpid = (long)waitReal(&status);
     long result = (long) status;
 
+
     args->arg1 = (void * )kidpid;
     args->arg2 = (void * )result;
+
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 
 /*
@@ -369,21 +372,50 @@ Input
 void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox to wake them up
     int status = (uintptr_t)args->arg1;
     terminateReal(status);
+    enterUserMode();
 
 }
 void gettimeofday(USLOSS_Sysargs *args){
+
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 void cputime(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
 }
 void getpid3(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 void semcreate(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 void semp(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 void semv(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 void semfree(USLOSS_Sysargs *args){
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 
 
