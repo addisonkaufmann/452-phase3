@@ -169,7 +169,7 @@ int SemV(long semaphore)
     USLOSS_Sysargs sysArg;
     
     CHECKMODE;
-    sysArg.number = SYS_SEMP;
+    sysArg.number = SYS_SEMV;
     sysArg.arg1 = (void *)semaphore;
 
     USLOSS_Syscall(&sysArg);
@@ -191,7 +191,7 @@ int SemFree(long semaphore)
     USLOSS_Sysargs sysArg;
     
     CHECKMODE;
-    sysArg.number = SYS_SEMP;
+    sysArg.number = SYS_SEMFREE;
     sysArg.arg1 = (void *)semaphore;
 
     USLOSS_Syscall(&sysArg);

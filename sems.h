@@ -1,8 +1,6 @@
 
 #define EMPTY 0
 #define OCCUPIED 1
-#define WAITING 2
-#define START3PID
 
 typedef struct p3Proc* p3ProcPtr;
 typedef struct sem* semPtr;
@@ -23,6 +21,7 @@ struct p3Proc {
     p3ProcPtr nextBlocked;
     int wakerPid;
     int wakerCode;
+    int numKids;
 };
 
 struct sem {
