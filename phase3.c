@@ -60,7 +60,7 @@ int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
 
-int debugflag3 = 1;
+int debugflag3 = 0;
 
 int start2(char *arg)
 {
@@ -132,9 +132,9 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     //call fork1 to spawnLaunch
     int kidpid = fork1(name, spawnLaunch, NULL, (int)stack_size, (int)priority);
 
-    if (debugflag3){
-        USLOSS_Console("spawnReal(): after fork1, kidpid = %d\n", kidpid);
-    }
+    // if (debugflag3){
+    //     USLOSS_Console("spawnReal(): after fork1, kidpid = %d\n", kidpid);
+    // }
 
     if (kidpid < 0){
         fprintf(stderr, "kidpid < 0. Terminating\n");
@@ -153,8 +153,9 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
 
     //wake up child who's blocked in spawnLaunch()
     MboxSend(kidProc->privateMboxId, NULL, 0);
-
-
+    if (debugflag3){
+        USLOSS_Console("spawnReal(): pid %d finally finished spawning pid %d\n", getpid(), kidpid );
+    }
     return kidpid;
 }
 
@@ -168,9 +169,9 @@ int spawnLaunch(){
     MboxReceive(me->privateMboxId, NULL, 0);
 
     //switch to user mode before executing
-    if (debugflag3){
-        USLOSS_Console("spawnLaunch(): entering user mode and executing func\n");
-    }
+    // if (debugflag3){
+    //     USLOSS_Console("spawnLaunch(): entering user mode and executing func\n");
+    // }
     enterUserMode();
     me->func(me->arg);
     if (debugflag3){
