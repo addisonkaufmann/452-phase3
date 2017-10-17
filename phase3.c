@@ -62,9 +62,6 @@ int semTableMbox;
 
 int debugflag3 = 0;
 
-
-
-
 int start2(char *arg)
 {
     int pid;
@@ -182,7 +179,7 @@ int spawnLaunch(){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): finished executing func\n");
     }
-    terminateReal(15);  
+    Terminate(15); 
     return 0;
 }
 
@@ -388,7 +385,7 @@ void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox
 
 }
 void gettimeofday(USLOSS_Sysargs *args){
-    args->arg1 = (void*)(long)readtime();
+    args->arg1 = (void*)(long)readtime(); // TODO: Doesn't seem correct?
     enterUserMode();
 }
 void cputime(USLOSS_Sysargs *args){
@@ -420,7 +417,7 @@ void semcreate(USLOSS_Sysargs *args){
 
     args->arg1 = (void *)semcreateReal(initNum);
     if (isZapped()) {
-        terminateReal(16); 
+        terminateReal(15); 
     }
     enterUserMode();
 }
@@ -522,6 +519,9 @@ void semv(USLOSS_Sysargs *args){
     }
     
     MboxReceive(mbodId, NULL, 0);
+    if (isZapped()){
+        terminateReal(15);
+    }
     enterUserMode();
 }
 void semfree(USLOSS_Sysargs *args){
