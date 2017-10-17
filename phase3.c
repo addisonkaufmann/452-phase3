@@ -54,7 +54,7 @@ struct launchArgs {
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
-int debugflag3 = 1;
+int debugflag3 = 0;
 
 
 
@@ -175,7 +175,7 @@ int spawnLaunch(){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): finished executing func\n");
     }
-    terminateReal(15);  
+    Terminate(15); 
     return 0;
 }
 
