@@ -60,7 +60,7 @@ int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
 
-int debugflag3 = 0;
+int debugflag3 = 1;
 
 int start2(char *arg)
 {
@@ -404,6 +404,9 @@ void getpid3(USLOSS_Sysargs *args){
 }
 
 void semcreate(USLOSS_Sysargs *args){
+    if (debugflag3) {
+        USLOSS_Console("semcreate(): called.\n");
+    }
     int initNum = (uintptr_t)args->arg1;
 
     if (initNum < 0 || numSems >= MAXSEMS) {
@@ -416,6 +419,10 @@ void semcreate(USLOSS_Sysargs *args){
     }
 
     args->arg1 = (void *)semcreateReal(initNum);
+
+    if (debugflag3) {
+        USLOSS_Console("semcreate(): test.\n");
+    }
     if (isZapped()) {
         terminateReal(15); 
     }
@@ -423,12 +430,16 @@ void semcreate(USLOSS_Sysargs *args){
 }
 
 long semcreateReal(int val) {
+    if (debugflag3) {
+        USLOSS_Console("semcreateReal(): called.\n");
+    }
     MboxSend(semTableMbox, NULL, 0);
     int semId = getNextSemID();
     SemTable[semId].status = OCCUPIED;
     SemTable[semId].value = val;
     SemTable[semId].blockedList = NULL;
     numSems++;
+
     MboxReceive(semTableMbox, NULL, 0);
     return (long)semId;
 }
@@ -436,7 +447,7 @@ long semcreateReal(int val) {
 int getNextSemID() {
     //return next available semaphore
     while (SemTable[nextSemId % MAXSEMS].status != EMPTY){
-        nextSemId++;
+        nextSemId = (nextSemId + 1) % MAXSEMS;
     }
 
     return nextSemId;
@@ -480,10 +491,16 @@ void semp(USLOSS_Sysargs *args){
         }
         MboxReceive(mboxId, NULL, 0); // Release mutex on this semaphore for others
         MboxReceive(myProc->privateMboxId, NULL, 0); // block awaiting a V()
+        if (debugflag3){
+            USLOSS_Console("semp(): awoken from block.\n");
+        }
         MboxSend(mboxId, NULL, 0); // Re-establish mutex
     }
     
     MboxReceive(mboxId, NULL, 0);
+    if (debugflag3){
+            USLOSS_Console("semp(): finished.\n");
+        }
     if (isZapped()){
         terminateReal(15);
     }
@@ -526,13 +543,39 @@ void semv(USLOSS_Sysargs *args){
 }
 void semfree(USLOSS_Sysargs *args){
     int semId = (uintptr_t)args->arg1;
+    int mboxId = SemTable[semId].mbox;
+    MboxSend(mboxId, NULL, 0);
 
-    // TODO: the rest
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+        args->arg4 = (void *)-1;
+        return;
+    }
+    else if (SemTable[semId].blockedList != NULL) {
+        args->arg4 = (void *)1;
+    }
+    else {
+        args->arg4 = (void *)0;
+    }
+
+    if (SemTable[semId].blockedList != NULL) {
+        if (debugflag3) {
+            USLOSS_Console("semfree(): terminating all procs blocked on this semaphore.\n");
+        }
+        p3ProcPtr curr = SemTable[semId].blockedList;
+        while (curr != NULL) {
+            p3ProcPtr temp = curr;
+            curr = curr->nextBlocked;
+            MboxSend(temp->privateMboxId, NULL, 0);
+            zap(temp->pid);
+            MboxReceive(mboxId, NULL, 0);
+        }
+    }
 
     SemTable[semId].status = EMPTY;
     SemTable[semId].blockedList = NULL;
     numSems--;
 
+    MboxReceive(mboxId, NULL, 0);
     if (isZapped()){
         terminateReal(15);
     }
