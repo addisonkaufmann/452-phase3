@@ -60,7 +60,7 @@ int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
 
-int debugflag3 = 0;
+int debugflag3 = 1;
 
 int start2(char *arg)
 {
@@ -153,9 +153,6 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
 
     //wake up child who's blocked in spawnLaunch()
     MboxSend(kidProc->privateMboxId, NULL, 0);
-    if (debugflag3){
-        USLOSS_Console("got here 1\n");
-    }
 
 
     return kidpid;
@@ -208,10 +205,6 @@ void terminateReal(int status){
     }
 
     p3ProcPtr me = getCurrentProc();
-
-    if (debugflag3)
-        USLOSS_Console("Got HERE???\n");
-
 
     if (me->numKids > 0){
         zapChildren(me);
@@ -309,9 +302,6 @@ Output:
     arg4: -1 if illegal values are given as input; 0 otherwise.
 */
 void spawn(USLOSS_Sysargs *args){
-    if (debugflag3){
-        USLOSS_Console("spawn(): called to spawn %s\n", args->arg5);
-    }
     //call spawnReal with proper args char *name, int (*func)(char *), char *arg, long stack_size, long priority
     int (*func)(char *) = args->arg1;
     char * arg = args->arg2;
