@@ -28,6 +28,7 @@ void gettimeofday();
 void getpid3();
 void cputime();
 void semcreate();
+long semcreateReal(int val);
 void semp();
 void semv();
 void semfree();
@@ -37,6 +38,7 @@ int enterUserMode();
 p3ProcPtr getCurrentProc();
 p3ProcPtr getProc();
 void zapChildren();
+int getNextSemID();
 
 typedef struct launchArgs * launchArgsPtr;
 typedef struct launchArgs launchArgs;
@@ -52,6 +54,10 @@ struct launchArgs {
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
+int nextSemId = 0;
+int numSems = 0;
+int semTableMbox;
+
 int debugflag3 = 0;
 
 
@@ -76,6 +82,7 @@ int start2(char *arg)
     initSemTable();
     initSyscallVec();
     initProc(getpid(), -1);
+    semTableMbox = MboxCreate(1,0);
     
 
     /*
@@ -245,6 +252,7 @@ void initProcTable(){
 void initSemTable(){
     for (int i = 0; i < MAXSEMS; i++){
         SemTable[i].status = EMPTY;
+        SemTable[i].mbox = MboxCreate(1,0);
     }
 }
 
@@ -344,18 +352,127 @@ void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox
     terminateReal(status);
 }
 void gettimeofday(USLOSS_Sysargs *args){
+    args->arg1 = (void*)(long)readtime();
+    enterUserMode();
 }
 void cputime(USLOSS_Sysargs *args){
+    // TODO: Add at least 2 readtimes to each function to sum execution time for current process, (sans time spent blocked)
 }
 void getpid3(USLOSS_Sysargs *args){
+    args->arg1 = (void *)(long)getpid();
+    enterUserMode();
 }
 void semcreate(USLOSS_Sysargs *args){
+    int initNum = (uintptr_t)args->arg1;
+
+    if (initNum < 0 || numSems >= MAXSEMS) {
+        args->arg4 = (void *)-1;
+        enterUserMode();
+        return;
+    }
+    else {
+        args->arg4 = 0;
+    }
+
+    args->arg1 = (void *)semcreateReal(initNum);
+    if (isZapped()) {
+        terminateReal(16); 
+    }
+    enterUserMode();
 }
+
+long semcreateReal(int val) {
+    MboxSend(semTableMbox, NULL, 0);
+    int semId = getNextSemID();
+    SemTable[semId].status = OCCUPIED;
+    SemTable[semId].value = val;
+    numSems++;
+    MboxReceive(semTableMbox, NULL, 0);
+    return (long)semId;
+}
+
+int getNextSemID() {
+    //return next available semaphore
+    while (SemTable[nextSemId % MAXSEMS].status != EMPTY){
+        nextSemId++;
+    }
+
+    return nextSemId;
+}
+
+
 void semp(USLOSS_Sysargs *args){
+    int semId = (uintptr_t)args->arg1;
+    int mboxId = SemTable[semId].mbox;
+    MboxSend(mboxId, NULL, 0);
+
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+        args->arg4 = (void *)-1;
+        return;
+    }
+    else {
+        args->arg4 = (void *)0;
+    }
+
+    if (SemTable[semId].value > 0) {
+        SemTable[semId].value--;
+    }
+    else {
+        // Add this process to the semaphore blocked list
+        int procId = getpid();
+        p3ProcPtr myProc = &ProcTable[procId];
+        if (SemTable[semId].blockedList == NULL) {
+            SemTable[semId].blockedList = myProc;
+        }
+        else {
+            p3ProcPtr curr = SemTable[semId].blockedList;
+            p3ProcPtr prev = NULL;
+            while (curr != NULL){
+                prev = curr;
+                curr = curr->nextBlocked;
+            }
+            prev->nextBlocked = myProc;
+        }
+        MboxReceive(myProc->privateMboxId, NULL, 0); // block
+        SemTable[semId].value--;
+    }
+    
+    MboxReceive(mboxId, NULL, 0);
+    enterUserMode();    
 }
+
 void semv(USLOSS_Sysargs *args){
+    int semId = (uintptr_t)args->arg1;
+    int mbodId = SemTable[semId].mbox;
+    MboxSend(mbodId, NULL, 0);
+
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+        args->arg4 = (void *)-1;
+        return;
+    }
+    else {
+        args->arg4 = (void *)0;
+    }
+
+    if (SemTable[semId].blockedList == NULL) {
+        SemTable[semId].value++;
+    } 
+    else {
+        MboxSend(SemTable[semId].blockedList->privateMboxId, NULL, 0);
+        SemTable[semId].blockedList = SemTable[semId].blockedList->nextBlocked;
+    }
+    
+    MboxReceive(mbodId, NULL, 0);
+    enterUserMode();
 }
 void semfree(USLOSS_Sysargs *args){
+    int semId = (uintptr_t)args->arg1;
+
+    // TODO: the rest
+
+    SemTable[semId].status = EMPTY;
+    SemTable[semId].blockedList = NULL;
+    numSems--;
 }
 
 
@@ -394,6 +511,7 @@ void initProc(int pid, int parentPid){
     proc->pid = pid;
     proc->children = NULL;
     proc->nextChild = NULL;
+    proc->nextBlocked = NULL;
     proc->func = NULL;
     proc->parentPid = parentPid;
     proc->wakerPid = -1;

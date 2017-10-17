@@ -20,6 +20,7 @@ struct p3Proc {
     char arg[MAXARG+1];
     p3ProcPtr children;
     p3ProcPtr nextChild;
+    p3ProcPtr nextBlocked;
     int wakerPid;
     int wakerCode;
 };
@@ -27,6 +28,8 @@ struct p3Proc {
 struct sem {
     int value;      //value of semaphore
     int status;     //status of semaphore
+    p3ProcPtr blockedList;
+    int mbox;
 };
 
 
