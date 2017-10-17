@@ -175,7 +175,7 @@ int spawnLaunch(){
         USLOSS_Console("spawnLaunch(): entering user mode and executing func\n");
     }
     enterUserMode();
-    me->func();
+    me->func(me->arg);
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): finished executing func\n");
     }
