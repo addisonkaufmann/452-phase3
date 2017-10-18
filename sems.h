@@ -29,6 +29,7 @@ struct sem {
     int status;     //status of semaphore
     p3ProcPtr blockedList;
     int mbox;
+    int zapped;
 };
 
 
