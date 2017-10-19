@@ -61,7 +61,7 @@ int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
 
-int debugflag3 = 1;
+int debugflag3 = 0;
 
 int start2(char *arg)
 {
@@ -281,6 +281,7 @@ void initSemTable(){
     for (int i = 0; i < MAXSEMS; i++){
         SemTable[i].status = EMPTY;
         SemTable[i].mbox = MboxCreate(1,0);
+        SemTable[i].zapped = 0;
     }
 }
 
@@ -390,14 +391,26 @@ void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox
 
 }
 void gettimeofday(USLOSS_Sysargs *args){
-    args->arg1 = (void*)(long)readtime(); // TODO: Doesn't seem correct?
-    enterUserMode();
-}
-void cputime(USLOSS_Sysargs *args){
-    // TODO: Add at least 2 readtimes to each function to sum execution time for current process, (sans time spent blocked)
+    int status;
+    int result = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, &status);
+    if (result != USLOSS_DEV_OK) {
+        if (debugflag3) {
+            USLOSS_Console("gettimeofday(): clock device call failed.\n");
+        }
+        terminateReal(15);
+    }
+    args->arg1 = (void*)(long)status;
     if (isZapped()){
         terminateReal(15);
     }
+    enterUserMode();
+}
+void cputime(USLOSS_Sysargs *args){
+    args->arg1 = (void*)(long)readtime();
+    if (isZapped()){
+        terminateReal(15);
+    }
+    enterUserMode();
 }
 
 void getpid3(USLOSS_Sysargs *args){
@@ -443,6 +456,7 @@ long semcreateReal(int val) {
     SemTable[semId].status = OCCUPIED;
     SemTable[semId].value = val;
     SemTable[semId].blockedList = NULL;
+    SemTable[semId].zapped = 0;
     numSems++;
 
     MboxReceive(semTableMbox, NULL, 0);
@@ -497,16 +511,13 @@ void semp(USLOSS_Sysargs *args){
         MboxReceive(mboxId, NULL, 0); // Release mutex on this semaphore for others
         MboxReceive(myProc->privateMboxId, NULL, 0); // block awaiting a V()
         if (debugflag3){
-            USLOSS_Console("semp(): awoken from block.\n");
+            USLOSS_Console("semp(): process %d awoken from block.\n", getpid());
         }
         MboxSend(mboxId, NULL, 0); // Re-establish mutex
     }
     
     MboxReceive(mboxId, NULL, 0);
-    if (debugflag3){
-            USLOSS_Console("semp(): finished.\n");
-        }
-    if (isZapped()){
+    if (isZapped() || SemTable[semId].zapped){
         terminateReal(15);
     }
     enterUserMode();
@@ -566,15 +577,16 @@ void semfree(USLOSS_Sysargs *args){
         if (debugflag3) {
             USLOSS_Console("semfree(): terminating all procs blocked on this semaphore.\n");
         }
+        SemTable[semId].zapped = 1;
         p3ProcPtr curr = SemTable[semId].blockedList;
         while (curr != NULL) {
             p3ProcPtr temp = curr;
             curr = curr->nextBlocked;
             MboxSend(temp->privateMboxId, NULL, 0);
-            zap(temp->pid);
-            MboxReceive(mboxId, NULL, 0);
         }
     }
+
+
 
     SemTable[semId].status = EMPTY;
     SemTable[semId].blockedList = NULL;
