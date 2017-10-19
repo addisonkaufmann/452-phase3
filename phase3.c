@@ -60,6 +60,7 @@ sem SemTable[MAXSEMS];      //semaphore table
 int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
+int spawnMbox;
 
 int debugflag3 = 0;
 
@@ -84,6 +85,7 @@ int start2(char *arg)
     initSyscallVec();
     initProc(getpid(), -1);
     semTableMbox = MboxCreate(1,0);
+    spawnMbox = MboxCreate(1,0);
     
 
     /*
@@ -133,7 +135,6 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     if (debugflag3){
         USLOSS_Console("spawnReal(): called to spawn %s\n", name);
     }
-
     //call fork1 to spawnLaunch
     int kidpid = fork1(name, spawnLaunch, NULL, (int)stack_size, (int)priority);
 
@@ -157,9 +158,9 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     kidProc->func = func;
 
     //wake up child who's blocked in spawnLaunch()
-    USLOSS_Console("\nPID %d SENDING ON PRIVATE WHILE LAUNCHING PID %d \n\n", getpid(), kidpid);
-    MboxSend(kidProc->privateMboxId, NULL, 0);
-    USLOSS_Console("\nPID %d SENT\n\n", getpid());
+    // USLOSS_Console("\nPID %d SENDING ON PRIVATE WHILE LAUNCHING PID %d \n\n", getpid(), kidpid);
+    MboxSend(kidProc->spawnMboxId, NULL, 0);
+    // USLOSS_Console("\nPID %d SENT\n\n", getpid());
 
     if (debugflag3){
         USLOSS_Console("spawnReal(): pid %d finally finished spawning pid %d\n", getpid(), kidpid );
@@ -174,12 +175,15 @@ int spawnLaunch(){
 
     //wait for spawnReal to finish creating pte
     p3ProcPtr me = getCurrentProc();
-    USLOSS_Console("\nPID %d RECEIVING ON PRIVATE\n\n", getpid());
-    MboxReceive(me->privateMboxId, NULL, 0);
-    USLOSS_Console("\nPID %d RECEIVED\n\n", getpid());
+    // USLOSS_Console("\nPID %d RECEIVING ON PRIVATE\n\n", getpid());
+    MboxReceive(me->spawnMboxId, NULL, 0);
+    // USLOSS_Console("\nPID %d RECEIVED\n\n", getpid());
 
     if (isZapped()){
-        terminateReal(15);
+        if (debugflag3){
+            USLOSS_Console("spawnLaunch(): pid %d was zapped, calling terminate\n", me->pid);
+        }
+        terminateReal(1);
     }
 
     //switch to user mode before executing
@@ -191,7 +195,7 @@ int spawnLaunch(){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): finished executing func\n");
     }
-    Terminate(15); 
+    Terminate(1); 
     return 0;
 }
 
@@ -233,9 +237,16 @@ void terminateReal(int status){
 void zapChildren(p3ProcPtr proc){
     p3ProcPtr child = proc->children;
     while (child != NULL){
+        if (debugflag3){
+            USLOSS_Console("terminateReal(): pid %d waiting to zap pid %d\n", proc->pid, child->pid);
+        }
+        int x = child->pid;
         zap(child->pid);
+        if (debugflag3){
+            USLOSS_Console("terminateReal(): pid %d finished zapping pid %d\n", proc->pid, x);
+        }
         proc->numKids--;
-        child = child->nextChild;
+        child = proc->children;
     }
     proc->children = NULL;
 }
@@ -272,6 +283,7 @@ void initProcTable(){
     for (int i = 0; i < MAXPROC; i++){
         ProcTable[i].status = EMPTY;
         ProcTable[i].privateMboxId = MboxCreate(0,0);
+        ProcTable[i].spawnMboxId = MboxCreate(1,0);
         ProcTable[i].children = NULL;
         ProcTable[i].nextChild = NULL;
     }
@@ -302,7 +314,7 @@ void initSyscallVec(){
 }
 
 void nullsys3(USLOSS_Sysargs *args){
-   terminateReal(15);
+   terminateReal(1);
 } /* nullsys */
 
 /*
@@ -354,7 +366,7 @@ void spawn(USLOSS_Sysargs *args){
     args->arg4 = (void *)errorcode;
 
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -375,7 +387,7 @@ void wait(USLOSS_Sysargs *args){
     args->arg2 = (void * )result;
 
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -397,18 +409,18 @@ void gettimeofday(USLOSS_Sysargs *args){
         if (debugflag3) {
             USLOSS_Console("gettimeofday(): clock device call failed.\n");
         }
-        terminateReal(15);
+        terminateReal(1);
     }
     args->arg1 = (void*)(long)status;
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
 void cputime(USLOSS_Sysargs *args){
     args->arg1 = (void*)(long)readtime();
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -416,7 +428,7 @@ void cputime(USLOSS_Sysargs *args){
 void getpid3(USLOSS_Sysargs *args){
     args->arg1 = (void *)(long)getpid();
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -442,7 +454,7 @@ void semcreate(USLOSS_Sysargs *args){
         USLOSS_Console("semcreate(): test.\n");
     }
     if (isZapped()) {
-        terminateReal(15); 
+        terminateReal(1); 
     }
     enterUserMode();
 }
@@ -518,7 +530,7 @@ void semp(USLOSS_Sysargs *args){
     
     MboxReceive(mboxId, NULL, 0);
     if (isZapped() || SemTable[semId].zapped){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -553,7 +565,7 @@ void semv(USLOSS_Sysargs *args){
     
     MboxReceive(mbodId, NULL, 0);
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }
@@ -594,7 +606,7 @@ void semfree(USLOSS_Sysargs *args){
 
     MboxReceive(mboxId, NULL, 0);
     if (isZapped()){
-        terminateReal(15);
+        terminateReal(1);
     }
     enterUserMode();
 }

@@ -13,14 +13,13 @@ struct p3Proc {
     int pid;        //pid of phase3 proc
     int status;     //status of proc
     int privateMboxId;
+    int spawnMboxId;
     int parentPid;
     int (*func)();
     char arg[MAXARG+1];
     p3ProcPtr children;
     p3ProcPtr nextChild;
     p3ProcPtr nextBlocked;
-    int wakerPid;
-    int wakerCode;
     int numKids;
 };
 
