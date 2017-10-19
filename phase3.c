@@ -41,6 +41,7 @@ void zapChildren();
 int getNextSemID();
 void cleanupProc();
 void dumpProcesses3();
+int Terminate();
 
 typedef struct launchArgs * launchArgsPtr;
 typedef struct launchArgs launchArgs;
@@ -121,7 +122,11 @@ int start2(char *arg)
      */
     pid = waitReal(&status);
 
-    return -1000;
+    if (debugflag3){
+        USLOSS_Console("start2(): done with waitReal pid = %d\n", pid );
+    }
+
+    return 0;
 } /* start2 */
 
 int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long priority){
@@ -152,7 +157,10 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     kidProc->func = func;
 
     //wake up child who's blocked in spawnLaunch()
+    USLOSS_Console("\nPID %d SENDING ON PRIVATE WHILE LAUNCHING PID %d \n\n", getpid(), kidpid);
     MboxSend(kidProc->privateMboxId, NULL, 0);
+    USLOSS_Console("\nPID %d SENT\n\n", getpid());
+
     if (debugflag3){
         USLOSS_Console("spawnReal(): pid %d finally finished spawning pid %d\n", getpid(), kidpid );
     }
@@ -166,7 +174,13 @@ int spawnLaunch(){
 
     //wait for spawnReal to finish creating pte
     p3ProcPtr me = getCurrentProc();
+    USLOSS_Console("\nPID %d RECEIVING ON PRIVATE\n\n", getpid());
     MboxReceive(me->privateMboxId, NULL, 0);
+    USLOSS_Console("\nPID %d RECEIVED\n\n", getpid());
+
+    if (isZapped()){
+        terminateReal(15);
+    }
 
     //switch to user mode before executing
     // if (debugflag3){
@@ -306,7 +320,7 @@ void spawn(USLOSS_Sysargs *args){
     //call spawnReal with proper args char *name, int (*func)(char *), char *arg, long stack_size, long priority
     int (*func)(char *) = args->arg1;
     char * arg = args->arg2;
-    int stack_size = (uintptr_t) args->arg3;
+    int stack_size = (uintptr_t) args->arg3; //TODO: change to pointer, dereference
     int priority = (uintptr_t) args->arg4;
     char * name = args->arg5;
 
