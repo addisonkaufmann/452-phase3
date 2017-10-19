@@ -143,8 +143,10 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     // }
 
     if (kidpid < 0){
-        fprintf(stderr, "kidpid < 0. Terminating\n");
-        USLOSS_Halt(1); //FIXME: terminate instead of halt
+        if (debugflag3){
+            USLOSS_Console("spawnReal(): fork1 failed pid = %d", kidpid);
+        }
+        return -1; //FIXME: terminate instead of halt
     }
 
     initProc(kidpid, getpid());
