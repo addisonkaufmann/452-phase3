@@ -527,7 +527,11 @@ void semp(USLOSS_Sysargs *args){
         if (debugflag3){
             USLOSS_Console("semp(): process %d awoken from block.\n", getpid());
         }
-        MboxSend(mboxId, NULL, 0); // Re-establish mutex
+        if (isZapped() || SemTable[semId].zapped){
+            terminateReal(1);
+        }
+        enterUserMode();
+        return;
     }
     
     MboxReceive(mboxId, NULL, 0);
