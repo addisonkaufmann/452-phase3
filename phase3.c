@@ -60,7 +60,6 @@ sem SemTable[MAXSEMS];      //semaphore table
 int nextSemId = 0;
 int numSems = 0;
 int semTableMbox;
-int spawnMbox;
 
 int debugflag3 = 0;
 
@@ -80,12 +79,20 @@ int start2(char *arg)
      * Data structure initialization as needed...
      */
 
+    //initialize the proc table, create mailboxes for each proc
     initProcTable();
+
+    //intialize sem table, create mailboxes for each semaphore
     initSemTable();
+
+    //intialize system call vector with phase3 function pointers
     initSyscallVec();
+
+    //initialize this proc with parent pid -1
     initProc(getpid(), -1);
+
+    //intialize semtable mutex
     semTableMbox = MboxCreate(1,0);
-    spawnMbox = MboxCreate(1,0);
     
 
     /*
@@ -116,12 +123,16 @@ int start2(char *arg)
      * values back into the sysargs pointer, switch to user-mode, and 
      * return to the user code that called Spawn.
      */
+
+    //spawn start3
     pid = spawnReal("start3", start3, NULL, USLOSS_MIN_STACK, 3);
 
     /* Call the waitReal version of your wait code here.
      * You call waitReal (rather than Wait) because start2 is running
      * in kernel (not user) mode.
      */
+
+    //wait for start3 to finish
     pid = waitReal(&status);
 
     if (debugflag3){
@@ -131,6 +142,11 @@ int start2(char *arg)
     return 0;
 } /* start2 */
 
+
+/*
+Calls fork1 to create new process which starts executing in spawnLaunch(). Initializes
+the PTE for the new proc and then wakes up the child process. Returns the pid of the forked child.
+*/
 int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long priority){
     if (debugflag3){
         USLOSS_Console("spawnReal(): called to spawn %s\n", name);
@@ -138,49 +154,57 @@ int spawnReal(char *name, int (*func)(char *), char *arg, long stack_size, long 
     //call fork1 to spawnLaunch
     int kidpid = fork1(name, spawnLaunch, NULL, (int)stack_size, (int)priority);
 
-    // if (debugflag3){
-    //     USLOSS_Console("spawnReal(): after fork1, kidpid = %d\n", kidpid);
-    // }
-
+    //Error check if fork1 failed
     if (kidpid < 0){
         if (debugflag3){
             USLOSS_Console("spawnReal(): fork1 failed pid = %d", kidpid);
         }
-        return -1; //FIXME: terminate instead of halt
+        return -1; 
     }
 
+    //intialize the PTE for the new process
     initProc(kidpid, getpid());
 
+    //get pointer to new proc
     p3ProcPtr kidProc = getProc(kidpid);
 
     //save function pointer and arg to PTE
     if (arg != NULL){
         memcpy(kidProc->arg, arg, strlen(arg) + 1);
     }
+
+    //copy func to kid proc
     kidProc->func = func;
 
     //wake up child who's blocked in spawnLaunch()
-    // USLOSS_Console("\nPID %d SENDING ON PRIVATE WHILE LAUNCHING PID %d \n\n", getpid(), kidpid);
     MboxSend(kidProc->spawnMboxId, NULL, 0);
-    // USLOSS_Console("\nPID %d SENT\n\n", getpid());
 
     if (debugflag3){
         USLOSS_Console("spawnReal(): pid %d finally finished spawning pid %d\n", getpid(), kidpid );
     }
+
+    //return pid of successful fork
     return kidpid;
 }
 
+/*
+A newly forked child starts executing here. It waits for parent to finish initializing
+the PTE by receiving on it's mbox. It terminates if zapped while waiting. Then it
+enters usermode and calls the actually user mode function. Last it calls terminate to finish
+if the function code didn't call terminate.
+*/
 int spawnLaunch(){
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): called by pid %d\n", getpid());
     }
 
-    //wait for spawnReal to finish creating pte
+    //get current proc ptr
     p3ProcPtr me = getCurrentProc();
-    // USLOSS_Console("\nPID %d RECEIVING ON PRIVATE\n\n", getpid());
-    MboxReceive(me->spawnMboxId, NULL, 0);
-    // USLOSS_Console("\nPID %d RECEIVED\n\n", getpid());
 
+    //wait for spawnReal to finish creating pte
+    MboxReceive(me->spawnMboxId, NULL, 0);
+
+    //terminate if zapped while waiting
     if (isZapped()){
         if (debugflag3){
             USLOSS_Console("spawnLaunch(): pid %d was zapped, calling terminate\n", me->pid);
@@ -188,66 +212,99 @@ int spawnLaunch(){
         terminateReal(1);
     }
 
-    //switch to user mode before executing
-    // if (debugflag3){
-    //     USLOSS_Console("spawnLaunch(): entering user mode and executing func\n");
-    // }
+    //switch to user mode
     enterUserMode();
+
+    //call function
     me->func(me->arg);
     if (debugflag3){
         USLOSS_Console("spawnLaunch(): finished executing func\n");
     }
+
+    //user-mode terminate (becuase we switched to user mode)
     Terminate(1); 
+
     return 0;
 }
 
+/*
+Calls join to wait for a child process to finish. Stores the quit status
+of the child process in *status. Returns the pid of the quit process.
+*/
 int waitReal(int * status){
     if (debugflag3){
         USLOSS_Console("waitReal(): called by pid %d\n", getpid());
     }
+    //result pointer
     int result;
+
+    //call join to wait for a child to finish
     int pid = join(&result);
 
+    //terminate if join fails
     if (pid < 0){
         fprintf(stderr, "waitReal(): join result < 0, terminate.\n");
-        USLOSS_Halt(1); //FIXME: terminate instead of  halt.
+        terminateReal(1);
     }
+
     if (debugflag3){
         USLOSS_Console("waitReal(): pid %d after join of pid %d\n", getpid(), pid);
     }
 
+    //put result into status pointer
     *status = result;
+
+    //returns pid of finished child
     return pid; 
 }
 
+/*
+Terminates the currently executing process with the given status by zapping
+all of its children, removing it from it's parents child list, and calling quit. 
+*/
 void terminateReal(int status){
     if (debugflag3){
         USLOSS_Console("terminateReal(): called by pid %d with status = %d\n", getpid(), status);
     }
 
+    //get current proc pointer
     p3ProcPtr me = getCurrentProc();
 
+    //zap all the children
     if (me->numKids > 0){
         zapChildren(me);
-        //zap all children
     }
     
-    cleanupProc(me); //reset fields and remove from parent's list 
+    //reset fields and remove from parent's list 
+    cleanupProc(me); 
+
+    //call quit to actually terminate the proc
     quit(status);
 }
 
+/*
+Calls zap on all the children of the given proc, and decrements the number of children. 
+Then sets the child list of proc to NULL. 
+*/
 void zapChildren(p3ProcPtr proc){
+    //Get the first child
     p3ProcPtr child = proc->children;
+
+    //loop through all children
     while (child != NULL){
         if (debugflag3){
             USLOSS_Console("terminateReal(): pid %d waiting to zap pid %d\n", proc->pid, child->pid);
         }
         int x = child->pid;
+        //call zap and wait for child to quit
         zap(child->pid);
         if (debugflag3){
             USLOSS_Console("terminateReal(): pid %d finished zapping pid %d\n", proc->pid, x);
         }
+        //child is no longer on proc's list
+        //decrement numkids
         proc->numKids--;
+        //reset childptr to the next child
         child = proc->children;
     }
     proc->children = NULL;
@@ -258,7 +315,10 @@ Reset proc fields and remove proc from parent's list of children
 */
 void cleanupProc(p3ProcPtr proc){
 
+    //get the proc's parent
     p3ProcPtr parent = getProc(proc->parentPid);
+
+    //remove proc from parent's list
     if (proc->pid == parent->children->pid){
         parent->children = proc->nextChild;
     } else {
@@ -271,6 +331,7 @@ void cleanupProc(p3ProcPtr proc){
         prev->nextChild = proc->nextChild;
     }
 
+    //reset all fields of the child
     parent->numKids--;
     proc->pid = -1;
     proc->status = EMPTY;
@@ -281,6 +342,10 @@ void cleanupProc(p3ProcPtr proc){
     proc->numKids = 0;
 }
 
+/*
+Initialize the proc table fields, and create the mailboxes
+needed by the procs. 
+*/
 void initProcTable(){
     for (int i = 0; i < MAXPROC; i++){
         ProcTable[i].status = EMPTY;
@@ -299,6 +364,10 @@ void initSemTable(){
     }
 }
 
+/*
+Initialize the system call vector to call our functions
+or nullsys3.
+*/
 void initSyscallVec(){
     for (int i = 0; i < MAXSYSCALLS; i++){
         systemCallVec[i] = nullsys3;
@@ -315,11 +384,16 @@ void initSyscallVec(){
     systemCallVec[SYS_SEMFREE] = semfree;
 }
 
+/*
+Called by the syscalls that we did not implement in phase3
+*/
 void nullsys3(USLOSS_Sysargs *args){
+    //just terminate
    terminateReal(1);
 } /* nullsys */
 
 /*
+Syscall function, error checks and calls spawnReal
 Input
     arg1: address of the function to spawn.
     arg2: parameter passed to spawned function.
@@ -374,6 +448,7 @@ void spawn(USLOSS_Sysargs *args){
 }
 
 /*
+Syscall function, error checks and call waitReal
 Output
     arg1: process id of the terminating child.
     arg2: the termination code of the child.
@@ -395,6 +470,7 @@ void wait(USLOSS_Sysargs *args){
 }
 
 /*
+Syscall function, calls terminateReal
 Input
     arg1: termination code for the process.
 */
@@ -404,6 +480,7 @@ void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox
     enterUserMode();
 
 }
+
 void gettimeofday(USLOSS_Sysargs *args){
     int status;
     int result = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, &status);
@@ -617,7 +694,9 @@ void semfree(USLOSS_Sysargs *args){
     enterUserMode();
 }
 
-
+/*
+Halts if not in kernel mode
+*/
 void check_kernel_mode(char * arg) {
     if (!isInKernelMode()) {
         fprintf(stderr, "%s: Not in kernel mode.\n", arg);
@@ -625,12 +704,18 @@ void check_kernel_mode(char * arg) {
     }
 }
 
+/*
+returns boolean of in kernel mode
+*/
 int isInKernelMode() {
     unsigned int psr = USLOSS_PsrGet();
     unsigned int op = 0x1;
     return psr & op;
 }
 
+/*
+Enters user mode by calling psrget()
+*/
 int enterUserMode() {
     unsigned int psr = USLOSS_PsrGet();
     unsigned int op = 0xfffffffe;
@@ -643,7 +728,9 @@ int enterUserMode() {
     }
 }
 
-
+/*
+Set all fields to the process and append to parent's list
+*/
 void initProc(int pid, int parentPid){
 
     p3ProcPtr proc = getProc(pid);
@@ -683,6 +770,9 @@ p3ProcPtr getProc(int pid) {
     return &ProcTable[pid % MAXPROC];
 }
 
+/*
+debug print
+*/
 void dumpProcesses3() {
     char * statuses[2];
     statuses[OCCUPIED] = "OCCUPIED";
