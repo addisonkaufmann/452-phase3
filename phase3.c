@@ -57,9 +57,9 @@ struct launchArgs {
 
 p3Proc ProcTable[MAXPROC];  //phase 3 proctable
 sem SemTable[MAXSEMS];      //semaphore table
-int nextSemId = 0;
-int numSems = 0;
-int semTableMbox;
+int nextSemId = 0;          //next valid, unused semaphore ID
+int numSems = 0;            //number of active semaphores
+int semTableMbox;           //mutex mailbox for the semaphore table
 
 int debugflag3 = 0;
 
@@ -356,7 +356,11 @@ void initProcTable(){
     }
 }
 
+/*
+Initialize the sem table fields, giving each a status and a 1 slot mailbox for mutex.
+*/
 void initSemTable(){
+    // Loop through each entry in the table initializing the semaphores
     for (int i = 0; i < MAXSEMS; i++){
         SemTable[i].status = EMPTY;
         SemTable[i].mbox = MboxCreate(1,0);
@@ -481,6 +485,10 @@ void terminate(USLOSS_Sysargs *args){  //conditional send on our parents mailbox
 
 }
 
+/*
+Returns the current time of day into the arg1 value of the sysargs struct passed to it.
+The time is according to the USLOSS simulator and not any real-world time.
+*/
 void gettimeofday(USLOSS_Sysargs *args){
     int status;
     int result = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, &status);
@@ -496,6 +504,11 @@ void gettimeofday(USLOSS_Sysargs *args){
     }
     enterUserMode();
 }
+
+/*
+Returns the amount of time the current process has spent running through arg1 of the
+sysargs struct passed into the function.
+*/
 void cputime(USLOSS_Sysargs *args){
     args->arg1 = (void*)(long)readtime();
     if (isZapped()){
@@ -504,6 +517,10 @@ void cputime(USLOSS_Sysargs *args){
     enterUserMode();
 }
 
+/*
+Returns the current processes' PID through the arg1 field of the 
+sysargs struct passed to the functions.
+*/
 void getpid3(USLOSS_Sysargs *args){
     args->arg1 = (void *)(long)getpid();
     if (isZapped()){
@@ -512,13 +529,14 @@ void getpid3(USLOSS_Sysargs *args){
     enterUserMode();
 }
 
+/* Creates a new semaphore with an initial value as given in arg1. Returns -1 in the arg4 field if an error occurs, otherwise 0.*/
 void semcreate(USLOSS_Sysargs *args){
     if (debugflag3) {
         USLOSS_Console("semcreate(): called.\n");
     }
-    int initNum = (uintptr_t)args->arg1;
+    int initNum = (uintptr_t)args->arg1; // Pull out the initial value of the semaphore
 
-    if (initNum < 0 || numSems >= MAXSEMS) {
+    if (initNum < 0 || numSems >= MAXSEMS) { // Check error cases
         args->arg4 = (void *)-1;
         enterUserMode();
         return;
@@ -527,7 +545,7 @@ void semcreate(USLOSS_Sysargs *args){
         args->arg4 = 0;
     }
 
-    args->arg1 = (void *)semcreateReal(initNum);
+    args->arg1 = (void *)semcreateReal(initNum); // Do the actual creation which requires mutex
 
     if (debugflag3) {
         USLOSS_Console("semcreate(): test.\n");
@@ -538,24 +556,27 @@ void semcreate(USLOSS_Sysargs *args){
     enterUserMode();
 }
 
+/* Does the actual work of creating a new semaphore with an initial value as given in the argument. 
+   Requires mutex to ensure no two processes attempt to create the same semaphore. */
 long semcreateReal(int val) {
     if (debugflag3) {
         USLOSS_Console("semcreateReal(): called.\n");
     }
-    MboxSend(semTableMbox, NULL, 0);
-    int semId = getNextSemID();
-    SemTable[semId].status = OCCUPIED;
+    MboxSend(semTableMbox, NULL, 0); // Acquire mutex
+    int semId = getNextSemID(); // Get the next available id
+    SemTable[semId].status = OCCUPIED; // Initialize the new semaphore at the found ID
     SemTable[semId].value = val;
     SemTable[semId].blockedList = NULL;
     SemTable[semId].zapped = 0;
-    numSems++;
+    numSems++; // Increment number of semaphores (for error checking to not create too many)
 
-    MboxReceive(semTableMbox, NULL, 0);
+    MboxReceive(semTableMbox, NULL, 0); // Release mutex
     return (long)semId;
 }
 
+/* Returns the next available ID in the semaphore table */
 int getNextSemID() {
-    //return next available semaphore
+    // Loop through table until found next available semaphore
     while (SemTable[nextSemId % MAXSEMS].status != EMPTY){
         nextSemId = (nextSemId + 1) % MAXSEMS;
     }
@@ -563,13 +584,15 @@ int getNextSemID() {
     return nextSemId;
 }
 
-
+/* Performs a "P" operation on the semaphore given in arg1. The operation decrements the semaphores value if > 0.
+   Otherwise, it blocks until the value is > 0 and then performs the decrement. Returns -1 in arg4 field if error, else 0.
+*/
 void semp(USLOSS_Sysargs *args){
-    int semId = (uintptr_t)args->arg1;
-    int mboxId = SemTable[semId].mbox;
-    MboxSend(mboxId, NULL, 0);
+    int semId = (uintptr_t)args->arg1; // Pull out the sem to perform the "p" operation on
+    int mboxId = SemTable[semId].mbox; // Get the semaphore's mailbox
+    MboxSend(mboxId, NULL, 0);         // Acquire mutex - don't want another process trying to modify the value at the same time
 
-    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) { // Error check
         args->arg4 = (void *)-1;
         return;
     }
@@ -578,16 +601,16 @@ void semp(USLOSS_Sysargs *args){
     }
 
     if (SemTable[semId].value > 0) {
-        SemTable[semId].value--;
+        SemTable[semId].value--; // Simple case where we can simply decrement the semaphore's valye
     }
-    else {
+    else { // Complex case where we need to block
         // Add this process to the semaphore blocked list
         int procId = getpid();
         p3ProcPtr myProc = &ProcTable[procId];
         if (SemTable[semId].blockedList == NULL) {
-            SemTable[semId].blockedList = myProc;
+            SemTable[semId].blockedList = myProc; // Setting as head if list is empty
         }
-        else {
+        else { // Appending to non-empty list
             p3ProcPtr curr = SemTable[semId].blockedList;
             p3ProcPtr prev = NULL;
             while (curr != NULL){
@@ -604,26 +627,31 @@ void semp(USLOSS_Sysargs *args){
         if (debugflag3){
             USLOSS_Console("semp(): process %d awoken from block.\n", getpid());
         }
-        if (isZapped() || SemTable[semId].zapped){
+        if (isZapped() || SemTable[semId].zapped){ // Check to see if we were zapped while blocked (including the semaphore was released)
             terminateReal(1);
         }
         enterUserMode();
         return;
     }
     
-    MboxReceive(mboxId, NULL, 0);
+    MboxReceive(mboxId, NULL, 0); // Release mutex
     if (isZapped() || SemTable[semId].zapped){
         terminateReal(1);
     }
     enterUserMode();
 }
 
+/* Performs a "V" operation on the semaphore given in arg1. The operation increments the semaphores value.
+   If other processes are blocked on a "P" operation for the same semaphore, it wakes the first one up.
+   Returns -1 in arg4 field if error, else 0.
+*/
 void semv(USLOSS_Sysargs *args){
-    int semId = (uintptr_t)args->arg1;
-    int mbodId = SemTable[semId].mbox;
-    MboxSend(mbodId, NULL, 0);
+    int semId = (uintptr_t)args->arg1; // Pull out semaphore ID from the args
+    int mbodId = SemTable[semId].mbox; // Get the mbox for this semaphore
+    MboxSend(mbodId, NULL, 0); // Acquire mutex
 
-    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+    // Check for errors
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) { 
         args->arg4 = (void *)-1;
         return;
     }
@@ -631,61 +659,66 @@ void semv(USLOSS_Sysargs *args){
         args->arg4 = (void *)0;
     }
 
-    if (SemTable[semId].blockedList == NULL) {
+    if (SemTable[semId].blockedList == NULL) { // Simple case, no one is blocked on a "P" so simply increment sem's value
         if (debugflag3){
             USLOSS_Console("semv(): incrementing semaphore.\n");
         }
         SemTable[semId].value++;
     } 
-    else {
+    else { // Other proc(s) are blocked on "P" operation so wake the first up
         if (debugflag3){
             USLOSS_Console("semv(): waking up blocked proc.\n");
         }
-        int wakeupId = SemTable[semId].blockedList->privateMboxId;
-        SemTable[semId].blockedList = SemTable[semId].blockedList->nextBlocked;
-        MboxSend(wakeupId, NULL, 0);
+        int wakeupId = SemTable[semId].blockedList->privateMboxId; // Get the ID of the process to wake up
+        SemTable[semId].blockedList = SemTable[semId].blockedList->nextBlocked; // Remove it from the queue of blocked processes
+        MboxSend(wakeupId, NULL, 0); // Wake up the blocked process
     }
     
-    MboxReceive(mbodId, NULL, 0);
+    MboxReceive(mbodId, NULL, 0); // Release mutex
     if (isZapped()){
         terminateReal(1);
     }
     enterUserMode();
 }
-void semfree(USLOSS_Sysargs *args){
-    int semId = (uintptr_t)args->arg1;
-    int mboxId = SemTable[semId].mbox;
-    MboxSend(mboxId, NULL, 0);
 
-    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) {
+/* Frees the semaphore, removing it from the semaphore table and terminating all of the processes blocked on it.
+   Semaphore to free is provided in arg1. arg4 will return -1 if error, 1 if freeing cause blocked processes to be killed,
+   and 0 otherwise.
+*/
+void semfree(USLOSS_Sysargs *args){
+    int semId = (uintptr_t)args->arg1; // Pull out the semaphore ID
+    int mboxId = SemTable[semId].mbox; // Get the mailbox for this semaphore
+    MboxSend(mboxId, NULL, 0); // Acquire mutex
+
+    if (semId < 0 || semId >= MAXSEMS || SemTable[semId].status == EMPTY) { // Error check
         args->arg4 = (void *)-1;
         return;
     }
-    else if (SemTable[semId].blockedList != NULL) {
+    else if (SemTable[semId].blockedList != NULL) { // Set return value to 1 if blocked processes will be terminated
         args->arg4 = (void *)1;
     }
     else {
         args->arg4 = (void *)0;
     }
 
+    // Terminate processes blocked on this semaphore if any
     if (SemTable[semId].blockedList != NULL) {
         if (debugflag3) {
             USLOSS_Console("semfree(): terminating all procs blocked on this semaphore.\n");
         }
-        SemTable[semId].zapped = 1;
+        SemTable[semId].zapped = 1; // Mark this semaphore as being freed so blocked procs know to terminate selves
         p3ProcPtr curr = SemTable[semId].blockedList;
-        while (curr != NULL) {
+        while (curr != NULL) { // Loop through the list waking up all of the blocked processes
             p3ProcPtr temp = curr;
             curr = curr->nextBlocked;
             MboxSend(temp->privateMboxId, NULL, 0);
         }
     }
 
-
-
+    // Clear out the semaphore table entry
     SemTable[semId].status = EMPTY;
     SemTable[semId].blockedList = NULL;
-    numSems--;
+    numSems--; // Decrement number of active semaphores
 
     MboxReceive(mboxId, NULL, 0);
     if (isZapped()){
